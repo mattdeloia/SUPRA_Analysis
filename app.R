@@ -9,61 +9,64 @@ library(janitor)
 library(DT)
 library(gt)
 library(shinyjs)
+library(gghighlight)
 
 df <- read_xlsx("SPARTA Raw Data (All Trials).xlsx") %>% 
-     left_join(read_xlsx("Key.xlsx")) %>% 
-     clean_names() %>%
-     separate(participant_name, into=c("event", "participant", "trial"), sep="_" ) %>% 
-     filter(result=="PointsBased") %>% 
-     select(participant, event, trial, measure, category, description, points_scored, grader_name) %>% 
-     drop_na(category) 
- 
- df2 <- df %>% 
-     filter(event=="STX") %>% 
-     group_by(participant, event,  trial, measure, category, description) %>% 
-     summarise(points_scored = median(points_scored, na.rm = TRUE)) %>% #median scores 
-     pivot_wider(names_from = "description", values_from = "points_scored") %>% 
-     ungroup() %>% 
-     mutate_if(is.numeric, scale) %>% 
-     pivot_longer(6:65, names_to="description", values_to = "score") %>%
-     rbind(
-         df %>% 
-             filter(event=="SH") %>% 
-             group_by(grader_name, participant, event, trial, measure, category, description) %>%
-             summarise(points_scored = mean(points_scored, na.rm = TRUE)) %>% #mean of rooms by OC
-             group_by(participant, event, trial, measure, category, description) %>% 
-             summarise(points_scored = median(points_scored, na.rm = TRUE)) %>% #median from multiple OCs
-             pivot_wider(names_from = "description", values_from = "points_scored") %>% 
-             ungroup() %>% 
-             mutate_if(is.numeric, scale) %>% 
-             pivot_longer(6:41, names_to="description", values_to = "score")
-     ) %>% 
-     drop_na()
+  left_join(read_xlsx("Key.xlsx")) %>% 
+  clean_names() %>%
+  separate(participant_name, into=c("event", "participant", "trial"), sep="_" ) %>% 
+  filter(result=="PointsBased") %>% 
+  select(participant, event, trial, room, measure, category, description, points_scored, grader_name, feature) %>%
+  drop_na(category) 
+
+df2 <- df %>% 
+  filter(event=="STX") %>% 
+  group_by(participant, event,  trial,  measure, category, description) %>% 
+  summarise(points_scored = median(points_scored, na.rm = TRUE)) %>% #median scores 
+  pivot_wider(names_from = "description", values_from = "points_scored") %>% 
+  ungroup() %>% 
+  mutate_if(is.numeric, scale) %>% 
+  pivot_longer(6:65, names_to="description", values_to = "score") %>%
+  rbind(
+     df %>% 
+      filter(event=="SH") %>% 
+      group_by(participant, event, trial, room, measure, category, description) %>%
+      summarise(points_scored = median(points_scored, na.rm = TRUE)) %>% #medians of OC scores by room
+      group_by(participant, event, trial, measure, category, description) %>%
+      summarise(points_scored = mean(points_scored, na.rm = TRUE)) %>% #mean of room scores  by trial
+      pivot_wider(names_from = "description", values_from = "points_scored") %>% 
+      ungroup() %>% 
+      mutate_if(is.numeric, scale) %>% 
+      pivot_longer(6:41, names_to="description", values_to = "score")
+  ) %>% 
+  drop_na(score)
  
  squadlist <- df$participant %>% unique()
- 
- #determine squad ranks (x = weighting_value)
- 
- figure <- function(x, y, z) {
-     df2 %>%  
-         filter(participant == x, event == y, measure == z) %>% 
-         group_by(participant, measure, category, trial) %>% 
-         summarise(score = mean(score)) %>% 
-         ggplot(aes(x=reorder(category, score, fun=mean), y=score, color=if_else(score<(-.5), "low", if_else(score<=.5, "average", "high")))) + 
-         geom_point(size=3) + 
-         geom_hline(yintercept = c(-2, -1.5, -1, -.5, 0, .5, 1, 1.5, 2), linetype="blank") +
-         geom_hline(yintercept = c( -.5, 0, .5), linetype="dashed", color = "darkgray") +
-         scale_color_manual(values=c("darkgray", "green", "red")) +
-         coord_flip() +
-         theme(legend.position = "blank")+
-         theme(axis.text = element_text(size = 10))+
-         theme(strip.background = element_rect(color = "blue", fill="lightblue", size = .5)) +
-         scale_y_continuous(breaks = c(-2, -1.5, -1, -.5, 0, .5, 1, 1.5, 2), labels=c("","", "below","",  "average","", "above", "", "")) +
-         xlab("") +
-         facet_grid(.~trial, scales="free")
+ squad_count <- squadlist %>% as.data.frame %>% nrow()
+ triallist <- df$trial %>% unique
+   
+figure <- function(x, y, z, q) {
+   df2 %>%  
+     filter(participant == x, event == y, measure == z) %>% 
+     group_by(participant, measure, category, trial) %>% 
+     summarise(score = mean(score, na.rm=TRUE)) %>% 
+     filter(trial %in% c(q)) %>% 
+     ggplot(aes(x=category, y=score, color=trial)) + 
+     # if_else(score<(-.5), "low", if_else(score<=.5, "average", "high"))
+     geom_jitter(height = 0, width = .05, size=3) + 
+     geom_hline(yintercept = c(-2, -1.5, -1, -.5, 0, .5, 1, 1.5, 2), linetype="blank") +
+     geom_hline(yintercept = c( -.5, 0, .5), linetype="dashed", color = c("red", "darkgray", "green"), size=1) +
+     scale_color_manual(name = y, values=c("Trial1"="darkgray","Trial2"= "skyblue", "Trial3"="blue")) +
+     coord_flip() +
+     scale_y_continuous(breaks = c(-2, -1.5, -1, -.5, 0, .5, 1, 1.5, 2), 
+                        labels=c("","", "below","",  "average","", "above", "", "")) +
+     theme(legend.position = "top")+
+     theme(axis.text = element_text(size = 10))+
+     theme(axis.text.x = element_text(color=c("darkgreen", "darkgray", "red"))) +
+     labs(x= "", y="", caption =  "Note: scaled for comparison to all squads and trials")
  }
 
- figure("Squad2", "STX", "Task")
+ figure("Squad1", "SH", "Task", c("Trial1", "Trial2", "Trial3"))
  
  table <- function (x, y, z) {
    df2 %>% 
@@ -88,7 +91,7 @@ df <- read_xlsx("SPARTA Raw Data (All Trials).xlsx") %>%
                   color = styleEqual (c("low", "ave", "high") , c("red","lightgray", "green")))
  }
  
- table("Squad1", "STX", "Task")
+ table("Squad1", "SH", "Task")
  
  df_measures <- df2 %>% 
    select(event, measure, category, description) %>% 
@@ -111,8 +114,11 @@ df <- read_xlsx("SPARTA Raw Data (All Trials).xlsx") %>%
       
      radioButtons("participant", label = "Squad", choices = squadlist),
       radioButtons("event", label = "Event", choices = list("STX", "SH")),
+     
+     checkboxGroupInput("trials", label = "Trials", choices = triallist, selected = "Trial1" ),
       
       radioButtons("measure", label = "Measure", choices = list("Task", "Performance")),
+     
       sliderInput("weighting", label = "Task weighting factor:", min=1, max=3, value=2, ticks = FALSE ),
      
      #fileInput("file", label = "File input"),
@@ -131,13 +137,8 @@ df <- read_xlsx("SPARTA Raw Data (All Trials).xlsx") %>%
         
           tabItem("visualization",
                   
-            infoBoxOutput("trial1"),
-            
-            infoBoxOutput("trial2"), 
-            
-            infoBoxOutput("trial3"), 
-            
-            plotOutput("mainplot", height = "400px" )
+
+            plotOutput("mainplot", height = "500px" )
         ),
       
         tabItem("datatable",
@@ -146,7 +147,13 @@ df <- read_xlsx("SPARTA Raw Data (All Trials).xlsx") %>%
         
         tabItem("summary",
                 downloadButton("downloadResults", "Download Results"),
-                plotOutput("comparisonplot", height = "500px")
+                br(),
+                infoBoxOutput("trial1"),
+                
+                infoBoxOutput("trial2"), 
+                
+                infoBoxOutput("trial3"),
+                plotOutput("comparisonplot", height = "400px")
                 )
       ) )  
  )
@@ -194,19 +201,19 @@ server <- function(input, output) {
   
     output$trial1 <- renderInfoBox({
       infoBox(title = "Trial 1 Rank",
-              subtitle = "rank of 3",
+              subtitle = paste("rank of ", squad_count),
               value =df_rank_tr1()$rank, 
               color = if_else(df_rank_tr1()$rank == "1", "lime", "light-blue") ) })
     
     output$trial2 <- renderInfoBox({
       infoBox(title = "Trial 2 Rank",
-              subtitle = "rank of 3",
+              subtitle = paste("rank of ", squad_count),
               value =df_rank_tr2()$rank,
               color = if_else(df_rank_tr2()$rank == "1", "lime", "light-blue") ) })
     
     output$trial3 <- renderInfoBox({
       infoBox(title = "Trial 3 Rank",
-              subtitle = "rank of 3",
+              subtitle = paste("rank of ", squad_count),
               value =df_rank_tr3()$rank, 
               color = if_else(df_rank_tr3()$rank == "1", "lime", "light-blue") ) })
     
@@ -220,7 +227,7 @@ server <- function(input, output) {
     
     
     output$mainplot <- renderPlot({
-        figure(input$participant, input$event, input$measure)
+        figure(input$participant, input$event, input$measure, input$trials)
     })
     
     output$maintable <- renderDataTable ({
@@ -228,7 +235,6 @@ server <- function(input, output) {
     })
 
     output$itemtable <- render_gt ({
-
         df_measures %>% 
         filter(event==input$event, measure==input$measure) %>% 
         select(category, items) %>%
@@ -238,15 +244,16 @@ server <- function(input, output) {
     
     output$comparisonplot <- renderPlot({
       df_rank() %>%
-        filter(event==input$event) %>% 
-        ggplot(aes(x=trial, y=point_total, color=participant, group = participant)) +
-        geom_point(size=3) +
-        geom_line(linetype = "dashed")+
+        filter(event==input$event, measure==input$measure) %>% 
+        ggplot(aes(x=trial, y=point_total,  group = participant)) +
+        geom_point(size=3, color="red") +
+        geom_line(linetype = "dashed", color="red")+
         ggrepel::geom_text_repel(aes(label = round(point_total,2)), size=4) +
+        gghighlight(participant==input$participant) +
         xlab("") +
         ylab("points (proportion of total)") +
         theme(axis.text = element_text(size = 12)) +
-        facet_grid(measure~.)
+        ggtitle(paste("Event: ", input$event))
     })
     
     output$downloadResults <- downloadHandler(
