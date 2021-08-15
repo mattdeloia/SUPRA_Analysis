@@ -48,7 +48,34 @@ df2 <- df %>%
 figure <- function(x, y, z, q) {
    df2 %>%  
      filter(participant == x, event == y, measure == z) %>% 
-     group_by(participant, measure, category, trial) %>% 
+     group_by(participant, measure, category, trial) %>%
+     mutate (category = factor (category, levels= c(
+       "TeamLdr_Post",
+       "SquadLdr_Post",
+       "Clearing",
+       "TeamLdr_Pre",
+       "SquadLdr_Pre",
+       "Reorganization",
+       "Consolidation_Security",
+       "Team_SBF",
+       "Team_Assault",
+       "SquadLdr",
+       "Security",
+       "Cover and Concealment",
+       "Control",
+       "Communication",
+       "Speed",
+       "Surprise",
+       "Violence of Action",
+       "Fire Effectiveness",
+       "Simplicity",
+       "Information Exchange",
+       "Weapons Handling",
+       "Supporting Behavior",
+       "Initiative/Leadership",
+       "Planning",
+       "Rehearsals")
+     )) %>%  
      summarise(score = mean(score, na.rm=TRUE)) %>% 
      filter(trial %in% c(q)) %>% 
      ggplot(aes(x=category, y=score, color=trial)) + 
@@ -80,16 +107,12 @@ figure <- function(x, y, z, q) {
      mutate(rank = rank(-ave)) %>%
      ungroup() %>% 
      mutate_at(vars(trial1:ave), ~if_else(.<(-.5), "low", if_else(.<=.5, "ave", "high"))) %>% 
-     arrange(event, category, rank) %>% 
+     left_join(read_xlsx("Key.xlsx", sheet="Weightings") %>% 
+                 select(description, feature )) %>%  
+     arrange(feature, participant, event, category, rank) %>% 
      ungroup() %>% 
-     select(category:trial3, rank) %>% 
-     datatable(class = "display compact", 
-               rownames= FALSE, 
-               options = list (
-                 pageLength = 15 ))  %>%
-     formatStyle (c('trial1', 'trial2', 'trial3'), 
-                  color = styleEqual (c("low", "ave", "high") , c("red","lightgray", "green")))
- }
+     select(participant, event, category:trial3) 
+     }
  
  table("Squad1", "SH", "Task")
  
@@ -100,6 +123,35 @@ figure <- function(x, y, z, q) {
    summarise(items = n()) %>% 
    ungroup()
  
+ figure2 <- function(x, y, z) {
+   df  %>% 
+     mutate(points_scored = as.character(points_scored)) %>% 
+     group_by(event, measure, trial, grader_name, points_scored) %>% 
+     summarise(count = n()) %>% 
+     mutate(percent = count/sum(count)) %>% 
+     filter(measure==x, event==y, trial%in%c(z)) %>% 
+     ggplot(aes(x=points_scored, y=percent, fill=grader_name)) +
+     geom_col(position='dodge2') +
+     labs(x="point score", y = "proportion of responses") +
+     facet_grid(event~trial, scales="free")
+ }
+ 
+ df_rank <- df %>% 
+     filter(measure=="Task") %>%
+     group_by(participant, event,  trial, measure, description) %>% 
+     summarise(points_scored = median(points_scored, na.rm = TRUE)) %>% 
+     left_join(read_xlsx("Key.xlsx", sheet="Weightings") %>% select(description, global_weight)) %>%
+     mutate(weighted_raw = points_scored*global_weight) %>% 
+     group_by(participant, event,  trial, measure) %>% 
+     summarise(point_total = sum(weighted_raw)/2) %>%
+     rbind( df %>% 
+              filter(measure=="Performance") %>% 
+              group_by(participant, trial, measure, event, category) %>% 
+              summarise(points_scored = median(points_scored, na.rm = TRUE)) %>% 
+              group_by(participant, trial, measure, event) %>% 
+              summarise(point_total = mean(points_scored, na.rm= TRUE)/10) 
+     )  
+
  ui <- dashboardPage(
     
     dashboardHeader(title="Squad Dashboard"),
@@ -109,8 +161,8 @@ figure <- function(x, y, z, q) {
       sidebarMenu( br(),
       menuItem("Visualization", tabName = "visualization", icon = icon("bar-chart-o")),
       menuItem("Data Table", tabName = "datatable", icon = icon("table")),
-      menuItem("Squad Summary", tabName = "summary", icon = icon ("dashboard"))
-      ),
+      menuItem("Squad Summary", tabName = "summary", icon = icon ("dashboard")),
+      menuItem("OC Review", tabName = "ocreview", icon = icon ("flag"))),
       
      radioButtons("participant", label = "Squad", choices = squadlist),
       radioButtons("event", label = "Event", choices = list("STX", "SH")),
@@ -119,7 +171,7 @@ figure <- function(x, y, z, q) {
       
       radioButtons("measure", label = "Measure", choices = list("Task", "Performance")),
      
-      sliderInput("weighting", label = "Task weighting factor:", min=1, max=3, value=2, ticks = FALSE ),
+      # sliderInput("weighting", label = "Task weighting factor:", min=1, max=3, value=2, ticks = FALSE ),
      
      #fileInput("file", label = "File input"),
       
@@ -127,8 +179,6 @@ figure <- function(x, y, z, q) {
             verbatimTextOutput("participant"),
             verbatimTextOutput("event"),
             verbatimTextOutput("measure")
-            
-      
             ),
 
     dashboardBody(
@@ -142,58 +192,42 @@ figure <- function(x, y, z, q) {
         ),
       
         tabItem("datatable",
+                downloadButton("downloadResults1", "Download Results"),
                
                dataTableOutput("maintable")),
         
         tabItem("summary",
-                downloadButton("downloadResults", "Download Results"),
+                downloadButton("downloadResults2", "Download Results"),
                 br(),
                 infoBoxOutput("trial1"),
                 
                 infoBoxOutput("trial2"), 
                 
                 infoBoxOutput("trial3"),
-                plotOutput("comparisonplot", height = "400px")
-                )
-      ) )  
- )
+                plotOutput("comparisonplot", height = "400px")),
+        
+        tabItem("ocreview",
+                plotOutput("ocplot", height = "500px"))
+        
+      ) )  )
+
     
 server <- function(input, output) {
 
-  df_rank <- reactive ({
-    df %>% 
-      filter(measure=="Task") %>%
-      group_by(participant, event,  trial, measure, description) %>% 
-      summarise(points_scored = median(points_scored, na.rm = TRUE)) %>% 
-      left_join(read_xlsx("Key.xlsx", sheet="Weightings")) %>%
-      mutate(weight = if_else(weight=="x", as.numeric(input$weighting), 1)) %>% 
-      mutate(weight = replace_na(weight, 1)) %>% 
-      mutate(weighted_raw = points_scored*weight) %>% 
-      group_by(participant, event,  trial, measure) %>% 
-      summarise(point_total = sum(weighted_raw)) %>%
-      mutate(point_total = if_else(event=="SH",  point_total/(12*2+9*2*input$weighting),point_total/(33*2 +12*2*input$weighting))) %>% 
-      rbind( df %>% 
-               filter(measure=="Performance") %>% 
-               group_by(participant, trial, measure, event, category) %>% 
-               summarise(points_scored = median(points_scored, na.rm = TRUE)) %>% 
-               group_by(participant, trial, measure, event) %>% 
-               summarise(point_total = mean(points_scored, na.rm= TRUE)/10) 
-      )  
-  })
-  
-  df_rank_tr1 <- reactive ({df_rank() %>%
+
+  df_rank_tr1 <- reactive ({df_rank %>%
       group_by(event, measure, trial) %>% 
       mutate(rank = rank(-point_total)) %>% 
       filter(participant == input$participant, event == input$event, measure == input$measure) %>% 
       filter(trial == "Trial1")})
   
-  df_rank_tr2 <- reactive ({df_rank() %>%
+  df_rank_tr2 <- reactive ({df_rank %>%
       group_by(event, measure, trial) %>% 
       mutate(rank = rank(-point_total)) %>% 
       filter(participant == input$participant, event == input$event, measure == input$measure) %>% 
       filter(trial == "Trial2")})
   
-  df_rank_tr3 <- reactive ({df_rank() %>%
+  df_rank_tr3 <- reactive ({df_rank %>%
       group_by(event, measure, trial) %>% 
       mutate(rank = rank(-point_total)) %>% 
       filter(participant == input$participant, event == input$event, measure == input$measure) %>% 
@@ -223,15 +257,25 @@ server <- function(input, output) {
     
     output$measure <- renderPrint({input$measure})
     
-    output$weighting <- renderPrint({input$weighting})
+    # output$weighting <- renderPrint({input$weighting})
     
     
     output$mainplot <- renderPlot({
         figure(input$participant, input$event, input$measure, input$trials)
     })
     
+    output$ocplot <- renderPlot ({
+      figure2(input$measure, input$event, input$trials)
+    })
+    
     output$maintable <- renderDataTable ({
-      table(input$participant, input$event, input$measure)
+      table(input$participant, input$event, input$measure) %>% 
+        datatable(class = "display compact", 
+                  rownames= FALSE, 
+                  options = list (
+                    pageLength = 15 ))  %>%
+        formatStyle (c('trial1', 'trial2', 'trial3'), 
+                     color = styleEqual (c("low", "ave", "high") , c("red","gray", "green")))
     })
 
     output$itemtable <- render_gt ({
@@ -243,7 +287,7 @@ server <- function(input, output) {
     })
     
     output$comparisonplot <- renderPlot({
-      df_rank() %>%
+      df_rank %>%
         filter(event==input$event, measure==input$measure) %>% 
         ggplot(aes(x=trial, y=point_total,  group = participant)) +
         geom_point(size=3, color="red") +
@@ -256,12 +300,20 @@ server <- function(input, output) {
         ggtitle(paste("Event: ", input$event))
     })
     
-    output$downloadResults <- downloadHandler(
+    output$downloadResults1 <- downloadHandler(
       filename = function(){
-        paste("Results_",Sys.Date(), ".csv")
+        paste("SquadResults_Task_",input$participant, "//.csv", sep = "")
       },
-      content=function(file) {
-        write.csv(df_rank(), file) 
+      content=function(filename) {
+        write.csv(table(input$participant, input$event, input$measure), filename) 
+      })
+    
+    output$downloadResults2 <- downloadHandler(
+      filename = function(){
+        paste("SquadResults_Summary",Sys.Date(), "//.csv", sep="")
+      },
+      content=function(filename) {
+        write.csv(df_rank, filename) 
       })
       
     
