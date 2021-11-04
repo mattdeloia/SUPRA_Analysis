@@ -12,7 +12,10 @@ df <- read_xlsx("SPARTA Raw Data (All Trials_August21).xlsx") %>%
   drop_na(category) %>% 
   select(participant, event, trial, measure, description, grader_name, points_scored) 
  
-#preprocessing (1) summarizes multiple OC ratings using the median score, (2) imputes median values where there are missinging ratings in the data frame, (3) joins a measure weighting to reflect importance and variability in the overall performance of the SUPRA event.  End Result: a long data frame with one measure per row.
+#preprocessing (1) summarizes multiple OC ratings using the median score, 
+#(2) imputes median values where there are missinging ratings in the data frame, 
+#(3) joins a measure weighting to reflect importance and variability in the overall performance of the SUPRA event.  
+#End Result: a long data frame with one measure per row.
 
 df_preprocessed <- df %>% 
   filter(measure=="Task", event =="SH") %>%
